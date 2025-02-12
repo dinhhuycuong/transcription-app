@@ -1,0 +1,401 @@
+'use client';
+
+import React, { useState, useRef, useEffect } from 'react';
+import { Loader2, Upload, Copy, Download, Play, Pause } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+
+interface Utterance {
+  speaker: string;
+  start: number;
+  end: number;
+  text: string;
+}
+
+interface TranscriptionResult {
+  utterances: Utterance[];
+  status: string;
+}
+
+const TranscriptionApp: React.FC = () => {
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
+  const [speakers, setSpeakers] = useState<Record<string, string>>({});
+  const [speakerExcerpts, setSpeakerExcerpts] = useState<Record<string, Utterance[]>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [currentAudio, setCurrentAudio] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    audioRef.current = new Audio();
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  const uploadToAssemblyAI = async (audioFile: File) => {
+    try {
+      // First, upload the file to AssemblyAI
+      const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': process.env.NEXT_PUBLIC_ASSEMBLYAI_API_KEY || ''
+        },
+        body: audioFile
+      });
+
+      if (!uploadResponse.ok) throw new Error('Failed to upload audio file');
+      const uploadData = await uploadResponse.json();
+      const audioUrl = uploadData.upload_url;
+
+      // Then, submit the transcription request with speaker diarization
+      const transcribeResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+        method: 'POST',
+        headers: {
+          'Authorization': process.env.NEXT_PUBLIC_ASSEMBLYAI_API_KEY || '',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          audio_url: audioUrl,
+          speaker_labels: true
+        }),
+      });
+
+      if (!transcribeResponse.ok) throw new Error('Failed to initiate transcription');
+      const transcribeData = await transcribeResponse.json();
+
+      // Poll for transcription completion
+      const result = await pollTranscriptionStatus(transcribeData.id);
+      return result;
+    } catch (error) {
+      throw new Error(`Transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const pollTranscriptionStatus = async (transcriptId: string) => {
+    const interval = 1000;
+    const maxAttempts = 120; // 2 minutes maximum
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+        headers: {
+          'Authorization': process.env.NEXT_PUBLIC_ASSEMBLYAI_API_KEY || '',
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.status === 'completed') {
+        return data;
+      } else if (data.status === 'error') {
+        throw new Error('Transcription failed');
+      }
+
+      attempts++;
+      await new Promise(resolve => setTimeout(resolve, interval));
+    }
+
+    throw new Error('Transcription timed out');
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const uploadedFile = event.target.files?.[0];
+    if (uploadedFile && uploadedFile.type.startsWith('audio/')) {
+      setFile(uploadedFile);
+      setError(null);
+    } else {
+      setError('Please upload a valid audio file');
+      setFile(null);
+    }
+  };
+
+  const findSpeakerExcerpts = (utterances: Utterance[]) => {
+    const excerptsBySpeaker: Record<string, Utterance[]> = {};
+    
+    // Group utterances by speaker
+    utterances.forEach(utterance => {
+      if (!excerptsBySpeaker[utterance.speaker]) {
+        excerptsBySpeaker[utterance.speaker] = [];
+      }
+      excerptsBySpeaker[utterance.speaker].push(utterance);
+    });
+
+    // Get 3 excerpts for each speaker
+    const result: Record<string, Utterance[]> = {};
+    Object.keys(excerptsBySpeaker).forEach(speaker => {
+      const speakerUtterances = excerptsBySpeaker[speaker];
+      // Sort by length to get more substantial examples
+      const sortedUtterances = [...speakerUtterances].sort((a, b) => 
+        ((b.end - b.start) - (a.end - a.start))
+      );
+      result[speaker] = sortedUtterances.slice(0, 3);
+    });
+
+    return result;
+  };
+
+  const handleSpeakerNameChange = (speakerId: string, name: string) => {
+    setSpeakers(prev => ({
+      ...prev,
+      [speakerId]: name
+    }));
+  };
+
+  const formatTimestamp = (ms: number) => {
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    const pad = (num: number) => num.toString().padStart(2, '0');
+    
+    return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  };
+
+  const playAudioExcerpt = async (start: number, end: number) => {
+    if (!file || !audioRef.current) return;
+
+    try {
+      // If there's currently playing audio, stop it first
+      if (isPlaying) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+        // If clicking the same excerpt that's playing, just stop it
+        if (currentAudio === `${start}-${end}`) {
+          setCurrentAudio(null);
+          return;
+        }
+      }
+
+      // Clear any existing event listeners
+      audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+      
+      // Create new audio source
+      const blob = new Blob([file], { type: file.type });
+      const url = URL.createObjectURL(blob);
+      
+      // Set up new audio
+      audioRef.current.src = url;
+      audioRef.current.currentTime = start / 1000;
+
+      // Function to handle time updates
+      function handleTimeUpdate() {
+        if (audioRef.current && audioRef.current.currentTime >= end / 1000) {
+          audioRef.current.pause();
+          setIsPlaying(false);
+          setCurrentAudio(null);
+          audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+        }
+      }
+
+      // Add new event listener
+      audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
+
+      // Wait for audio to be ready before playing
+      await audioRef.current.play();
+      setIsPlaying(true);
+      setCurrentAudio(`${start}-${end}`);
+
+      // Clean up URL after playback starts
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Audio playback error:', err);
+      setIsPlaying(false);
+      setCurrentAudio(null);
+    }
+  };
+
+  const copyToClipboard = () => {
+    if (!transcription) return;
+    
+    const formattedText = transcription.utterances.map(utterance => {
+      const speakerName = speakers[utterance.speaker] || `Speaker ${utterance.speaker}`;
+      return `${speakerName} ${formatTimestamp(utterance.start)}\n${utterance.text}\n`;
+    }).join('\n');
+    
+    navigator.clipboard.writeText(formattedText);
+  };
+
+  const downloadTranscription = () => {
+    if (!transcription) return;
+    
+    const formattedText = transcription.utterances.map(utterance => {
+      const speakerName = speakers[utterance.speaker] || `Speaker ${utterance.speaker}`;
+      return `${speakerName} ${formatTimestamp(utterance.start)}\n${utterance.text}\n`;
+    }).join('\n');
+    
+    const blob = new Blob([formattedText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'transcription.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSubmit = async () => {
+    if (!file) return;
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      const result = await uploadToAssemblyAI(file);
+      setTranscription(result);
+      
+      // Initialize speaker names and find excerpts
+      const uniqueSpeakers = [...new Set(result.utterances.map(u => u.speaker))];
+      const initialSpeakers: Record<string, string> = {};
+      uniqueSpeakers.forEach(speaker => {
+        initialSpeakers[speaker] = '';
+      });
+      setSpeakers(initialSpeakers);
+      
+      const excerpts = findSpeakerExcerpts(result.utterances);
+      setSpeakerExcerpts(excerpts);
+    } catch (err) {
+      setError('Error processing the audio file. Please try again.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-6">
+      <h1 className="text-2xl font-bold mb-6">Audio Transcription with Speaker Detection</h1>
+      
+      {/* File Upload Section */}
+      <div className="space-y-4">
+        <div 
+          className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Upload className="mx-auto h-12 w-12 text-gray-400" />
+          <p className="mt-2">Click to upload or drag and drop audio file</p>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            accept="audio/*"
+            className="hidden"
+          />
+        </div>
+        {file && (
+          <div className="flex justify-between items-center p-4 bg-gray-50 rounded">
+            <span>{file.name}</span>
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
+            >
+              {loading ? (
+                <div className="flex items-center">
+                  <Loader2 className="animate-spin mr-2" />
+                  Processing...
+                </div>
+              ) : (
+                'Transcribe'
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Error Display */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Speaker Names with Excerpts */}
+      {transcription && (
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">Speaker Names</h2>
+          <div className="space-y-6">
+            {Object.keys(speakers).map((speakerId) => (
+              <div key={speakerId} className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <label className="min-w-24">Speaker {speakerId}:</label>
+                  <input
+                    type="text"
+                    value={speakers[speakerId]}
+                    onChange={(e) => handleSpeakerNameChange(speakerId, e.target.value)}
+                    placeholder={`Enter name for Speaker ${speakerId}`}
+                    className="flex-1 p-2 border rounded"
+                  />
+                </div>
+                {speakerExcerpts[speakerId] && (
+                  <div className="ml-24 space-y-2">
+                    {speakerExcerpts[speakerId].map((excerpt, idx) => (
+                      <div key={idx} className="flex items-center space-x-2 text-sm">
+                        <button
+                          onClick={() => playAudioExcerpt(excerpt.start, excerpt.end)}
+                          className="p-1 hover:bg-gray-100 rounded"
+                        >
+                          {currentAudio === `${excerpt.start}-${excerpt.end}` && isPlaying ? (
+                            <Pause className="h-4 w-4" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                        </button>
+                        <span className="text-gray-600">{formatTimestamp(excerpt.start)}:</span>
+                        <span>{excerpt.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Transcription Display */}
+      {transcription && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold">Transcription</h2>
+            <div className="space-x-2">
+              <button
+                onClick={copyToClipboard}
+                className="p-2 hover:bg-gray-100 rounded"
+                title="Copy to clipboard"
+              >
+                <Copy className="h-5 w-5" />
+              </button>
+              <button
+                onClick={downloadTranscription}
+                className="p-2 hover:bg-gray-100 rounded"
+                title="Download as text file"
+              >
+                <Download className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+          <div className="space-y-4 p-4 bg-gray-50 rounded">
+            {transcription.utterances.map((utterance, index) => (
+              <div key={index} className="space-y-1">
+                <div className="text-sm text-gray-600">
+                  {speakers[utterance.speaker] || `Speaker ${utterance.speaker}`} {formatTimestamp(utterance.start)}
+                </div>
+                <p className="pl-4">{utterance.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default TranscriptionApp;
