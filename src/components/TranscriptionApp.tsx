@@ -252,7 +252,7 @@ const TranscriptionApp: React.FC = () => {
       const result = await uploadToAssemblyAI(file);
       setTranscription(result);
       
-      const uniqueSpeakers = [...new Set(result.utterances.map(u => u.speaker))];
+      const uniqueSpeakers = [...new Set(result.utterances.map((u: Utterance) => u.speaker))];
       const initialSpeakers: Record<string, string> = {};
       uniqueSpeakers.forEach(speaker => {
         initialSpeakers[speaker] = '';
