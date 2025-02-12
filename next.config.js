@@ -5,6 +5,8 @@ const nextConfig = {
       unoptimized: true,
     },
     basePath: '/transcription-app',
+    assetPrefix: '/transcription-app/',
+    trailingSlash: true,
   };
   
   module.exports = nextConfig;
