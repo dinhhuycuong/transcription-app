@@ -4,7 +4,7 @@ import React from 'react';
 import dynamic from 'next/dynamic';
 
 const TranscriptionApp = dynamic(
-  () => import('../components/TranscriptionApp').then(mod => mod.default),
+  () => import('../components/TranscriptionApp'),
   {
     ssr: false,
     loading: () => (

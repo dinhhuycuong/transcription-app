@@ -428,3 +428,5 @@ const TranscriptionApp: React.FC = () => {
     </div>
   );
 };
+
+export { TranscriptionApp as default };
