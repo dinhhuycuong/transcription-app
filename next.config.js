@@ -4,7 +4,6 @@ const nextConfig = {
     images: {
       unoptimized: true,
     },
-    // Replace 'your-repo-name' with your actual GitHub repository name
     basePath: '/transcription-app',
   };
   
