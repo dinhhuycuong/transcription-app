@@ -27,6 +27,9 @@ const TranscriptionApp: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [apiKey, setApiKey] = useState<string>(
+    typeof window !== 'undefined' ? localStorage.getItem('assemblyai_key') || '' : ''
+  );
 
   useEffect(() => {
     audioRef.current = new Audio();
@@ -38,13 +41,25 @@ const TranscriptionApp: React.FC = () => {
     };
   }, []);
 
+  const createHandleTimeUpdate = (end: number, audioElement: HTMLAudioElement, cleanup: () => void) => () => {
+    if (audioElement && audioElement.currentTime >= end / 1000) {
+      audioElement.pause();
+      setIsPlaying(false);
+      setCurrentAudio(null);
+      cleanup();
+    }
+  };
+
   const uploadToAssemblyAI = async (audioFile: File) => {
+    if (!apiKey) {
+      throw new Error('Please enter your AssemblyAI API key');
+    }
+
     try {
-      // First, upload the file to AssemblyAI
       const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
         method: 'POST',
         headers: {
-          'Authorization': process.env.NEXT_PUBLIC_ASSEMBLYAI_API_KEY || ''
+          'Authorization': apiKey
         },
         body: audioFile
       });
@@ -53,11 +68,10 @@ const TranscriptionApp: React.FC = () => {
       const uploadData = await uploadResponse.json();
       const audioUrl = uploadData.upload_url;
 
-      // Then, submit the transcription request with speaker diarization
       const transcribeResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
         method: 'POST',
         headers: {
-          'Authorization': process.env.NEXT_PUBLIC_ASSEMBLYAI_API_KEY || '',
+          'Authorization': apiKey,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -69,7 +83,6 @@ const TranscriptionApp: React.FC = () => {
       if (!transcribeResponse.ok) throw new Error('Failed to initiate transcription');
       const transcribeData = await transcribeResponse.json();
 
-      // Poll for transcription completion
       const result = await pollTranscriptionStatus(transcribeData.id);
       return result;
     } catch (error) {
@@ -78,14 +91,18 @@ const TranscriptionApp: React.FC = () => {
   };
 
   const pollTranscriptionStatus = async (transcriptId: string) => {
+    if (!apiKey) {
+      throw new Error('Please enter your AssemblyAI API key');
+    }
+
     const interval = 1000;
-    const maxAttempts = 120; // 2 minutes maximum
+    const maxAttempts = 120;
     let attempts = 0;
 
     while (attempts < maxAttempts) {
       const response = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
         headers: {
-          'Authorization': process.env.NEXT_PUBLIC_ASSEMBLYAI_API_KEY || '',
+          'Authorization': apiKey,
         },
       });
 
@@ -118,7 +135,6 @@ const TranscriptionApp: React.FC = () => {
   const findSpeakerExcerpts = (utterances: Utterance[]) => {
     const excerptsBySpeaker: Record<string, Utterance[]> = {};
     
-    // Group utterances by speaker
     utterances.forEach(utterance => {
       if (!excerptsBySpeaker[utterance.speaker]) {
         excerptsBySpeaker[utterance.speaker] = [];
@@ -126,11 +142,9 @@ const TranscriptionApp: React.FC = () => {
       excerptsBySpeaker[utterance.speaker].push(utterance);
     });
 
-    // Get 3 excerpts for each speaker
     const result: Record<string, Utterance[]> = {};
     Object.keys(excerptsBySpeaker).forEach(speaker => {
       const speakerUtterances = excerptsBySpeaker[speaker];
-      // Sort by length to get more substantial examples
       const sortedUtterances = [...speakerUtterances].sort((a, b) => 
         ((b.end - b.start) - (a.end - a.start))
       );
@@ -162,48 +176,35 @@ const TranscriptionApp: React.FC = () => {
     if (!file || !audioRef.current) return;
 
     try {
-      // If there's currently playing audio, stop it first
       if (isPlaying) {
         audioRef.current.pause();
         setIsPlaying(false);
-        // If clicking the same excerpt that's playing, just stop it
         if (currentAudio === `${start}-${end}`) {
           setCurrentAudio(null);
           return;
         }
       }
 
-      // Clear any existing event listeners
-      audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-      
-      // Create new audio source
       const blob = new Blob([file], { type: file.type });
       const url = URL.createObjectURL(blob);
       
-      // Set up new audio
       audioRef.current.src = url;
       audioRef.current.currentTime = start / 1000;
 
-      // Function to handle time updates
-      function handleTimeUpdate() {
-        if (audioRef.current && audioRef.current.currentTime >= end / 1000) {
-          audioRef.current.pause();
-          setIsPlaying(false);
-          setCurrentAudio(null);
+      const cleanup = () => {
+        if (audioRef.current) {
+          const handleTimeUpdate = createHandleTimeUpdate(end, audioRef.current, () => {});
           audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
         }
-      }
+        URL.revokeObjectURL(url);
+      };
 
-      // Add new event listener
+      const handleTimeUpdate = createHandleTimeUpdate(end, audioRef.current, cleanup);
       audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
 
-      // Wait for audio to be ready before playing
       await audioRef.current.play();
       setIsPlaying(true);
       setCurrentAudio(`${start}-${end}`);
-
-      // Clean up URL after playback starts
-      URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Audio playback error:', err);
       setIsPlaying(false);
@@ -251,7 +252,6 @@ const TranscriptionApp: React.FC = () => {
       const result = await uploadToAssemblyAI(file);
       setTranscription(result);
       
-      // Initialize speaker names and find excerpts
       const uniqueSpeakers = [...new Set(result.utterances.map(u => u.speaker))];
       const initialSpeakers: Record<string, string> = {};
       uniqueSpeakers.forEach(speaker => {
@@ -273,6 +273,37 @@ const TranscriptionApp: React.FC = () => {
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       <h1 className="text-2xl font-bold mb-6">Audio Transcription with Speaker Detection</h1>
       
+      {/* API Key Input */}
+      {!apiKey && (
+        <div className="mb-6">
+          <Alert>
+            <AlertDescription>
+              You need an AssemblyAI API key to use this app. Get one for free at{' '}
+              <a 
+                href="https://www.assemblyai.com/" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-500 hover:underline"
+              >
+                AssemblyAI
+              </a>
+            </AlertDescription>
+          </Alert>
+          <div className="mt-4">
+            <input
+              type="text"
+              placeholder="Enter your AssemblyAI API key"
+              className="p-2 border rounded w-full"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKey(e.target.value);
+                localStorage.setItem('assemblyai_key', e.target.value);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* File Upload Section */}
       <div className="space-y-4">
         <div 
@@ -397,5 +428,3 @@ const TranscriptionApp: React.FC = () => {
     </div>
   );
 };
-
-export default TranscriptionApp;
