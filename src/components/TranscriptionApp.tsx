@@ -42,7 +42,7 @@ const TranscriptionApp: React.FC = () => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current.src = '';
+        audioRef.current.src = "";
       }
     };
   }, []);
@@ -142,27 +142,29 @@ const TranscriptionApp: React.FC = () => {
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files || event.target.files.length === 0) {
-      return;
-    }
-  
-    const uploadedFile = event.target.files[0];
-    
-    // Clear the input value immediately
-    event.target.value = '';
-    
-    if (uploadedFile && uploadedFile.type.startsWith('audio/')) {
+    // Reset file input first
+    const input = event.target;
+    const uploadedFile = input.files?.[0];
+    input.value = ""; // Clear input immediately
+
+    if (uploadedFile && uploadedFile.type.startsWith("audio/")) {
       // Stop any current audio playback
-      stopCurrentPlayback();
-      
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+
       // Clear all previous states
+      setIsPlaying(false);
+      setCurrentAudio(null);
       setFile(uploadedFile);
       setError(null);
       setTranscription(null);
       setSpeakers({});
       setSpeakerExcerpts({});
-    } else {
-      setError('Please upload a valid audio file');
+    } else if (uploadedFile) {
+      // If file was selected but invalid type
+      setError("Please upload a valid audio file");
       setFile(null);
     }
   };
@@ -211,10 +213,13 @@ const TranscriptionApp: React.FC = () => {
     if (audioRef.current) {
       audioRef.current.pause();
       if (activeTimeUpdateHandler.current) {
-        audioRef.current.removeEventListener('timeupdate', activeTimeUpdateHandler.current);
+        audioRef.current.removeEventListener(
+          "timeupdate",
+          activeTimeUpdateHandler.current
+        );
         activeTimeUpdateHandler.current = null;
       }
-      audioRef.current.src = '';
+      audioRef.current.src = "";
     }
     setIsPlaying(false);
     setCurrentAudio(null);
@@ -250,15 +255,14 @@ const TranscriptionApp: React.FC = () => {
 
       // Store the handler reference for cleanup
       activeTimeUpdateHandler.current = handleTimeUpdate;
-      audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
+      audioRef.current.addEventListener("timeupdate", handleTimeUpdate);
 
       // Play the audio
       await audioRef.current.play();
       setIsPlaying(true);
       setCurrentAudio(`${start}-${end}`);
-
     } catch (err) {
-      console.error('Audio playback error:', err);
+      console.error("Audio playback error:", err);
       stopCurrentPlayback();
     }
   };
@@ -267,7 +271,7 @@ const TranscriptionApp: React.FC = () => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current.src = '';
+        audioRef.current.src = "";
       }
     };
   }, []);
@@ -377,45 +381,42 @@ const TranscriptionApp: React.FC = () => {
 
       {/* File Upload Section */}
       <div className="space-y-6">
-        <div className="p-6 bg-gray-50 rounded-lg shadow-sm">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-4">
-              <label 
-                htmlFor="file-upload" 
-                className="p-2 hover:bg-gray-100 rounded cursor-pointer"
-              >
-                <Upload className="h-5 w-5 text-gray-500" />
-              </label>
-              <span className="truncate max-w-md">
-                {file ? file.name : 'No file selected'}
-              </span>
-            </div>
-            {file && (
-              <button
-                onClick={handleSubmit}
-                disabled={loading}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
-              >
-                {loading ? (
-                  <div className="flex items-center">
-                    <Loader2 className="animate-spin mr-2" />
-                    Processing...
-                  </div>
-                ) : (
-                  "Transcribe"
-                )}
-              </button>
-            )}
-          </div>
+        <div
+          className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
+          onClick={() => document.getElementById("file-upload")?.click()}
+        >
+          <Upload className="mx-auto h-12 w-12 text-gray-400" />
+          <p className="mt-4">Click to upload or drag and drop audio file</p>
+          <p className="text-sm text-gray-500 mt-2">
+            {file ? `Current file: ${file.name}` : "No file selected"}
+          </p>
+          <input
+            id="file-upload"
+            type="file"
+            onChange={handleFileUpload}
+            accept="audio/*"
+            className="hidden"
+          />
         </div>
-        <input
-          id="file-upload"
-          type="file"
-          onChange={handleFileUpload}
-          accept="audio/*"
-          className="hidden"
-          ref={fileInputRef}
-        />
+
+        {file && (
+          <div className="flex justify-end">
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400"
+            >
+              {loading ? (
+                <div className="flex items-center">
+                  <Loader2 className="animate-spin mr-2" />
+                  Processing...
+                </div>
+              ) : (
+                "Transcribe"
+              )}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Error Display */}
