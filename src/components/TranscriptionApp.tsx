@@ -381,26 +381,17 @@ const TranscriptionApp: React.FC = () => {
 
       {/* File Upload Section */}
       <div className="space-y-6">
-        <div
-          className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
-          onClick={() => document.getElementById("file-upload")?.click()}
-        >
-          <Upload className="mx-auto h-12 w-12 text-gray-400" />
-          <p className="mt-4">Click to upload or drag and drop audio file</p>
-          <p className="text-sm text-gray-500 mt-2">
-            {file ? `Current file: ${file.name}` : "No file selected"}
-          </p>
-          <input
-            id="file-upload"
-            type="file"
-            onChange={handleFileUpload}
-            accept="audio/*"
-            className="hidden"
-          />
-        </div>
-
-        {file && (
-          <div className="flex justify-end">
+        {file ? (
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => document.getElementById("file-upload")?.click()}
+                className="p-2 hover:bg-gray-100 rounded"
+              >
+                <Upload className="h-5 w-5 text-gray-500" />
+              </button>
+              <span className="truncate max-w-md">{file.name}</span>
+            </div>
             <button
               onClick={handleSubmit}
               disabled={loading}
@@ -416,7 +407,22 @@ const TranscriptionApp: React.FC = () => {
               )}
             </button>
           </div>
+        ) : (
+          <div
+            className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
+            onClick={() => document.getElementById("file-upload")?.click()}
+          >
+            <Upload className="mx-auto h-12 w-12 text-gray-400" />
+            <p className="mt-4">Click to upload or drag and drop audio file</p>
+          </div>
         )}
+        <input
+          id="file-upload"
+          type="file"
+          onChange={handleFileUpload}
+          accept="audio/*"
+          className="hidden"
+        />
       </div>
 
       {/* Error Display */}
