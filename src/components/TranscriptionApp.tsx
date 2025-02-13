@@ -35,13 +35,14 @@ const TranscriptionApp: React.FC = () => {
       ? localStorage.getItem("assemblyai_key") || ""
       : ""
   );
+  const activeTimeUpdateHandler = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     audioRef.current = new Audio();
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
-        audioRef.current = null;
+        audioRef.current.src = '';
       }
     };
   }, []);
@@ -143,28 +144,28 @@ const TranscriptionApp: React.FC = () => {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFile = event.target.files?.[0];
     if (uploadedFile && uploadedFile.type.startsWith('audio/')) {
-      // Clear previous data
+      // Reset audio state
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+      setIsPlaying(false);
+      setCurrentAudio(null);
+
+      // Clear previous states
       setFile(uploadedFile);
       setError(null);
       setTranscription(null);
       setSpeakers({});
       setSpeakerExcerpts({});
-      setCurrentAudio(null);
-      setIsPlaying(false);
-      
-      // Reset audio player
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-      }
     } else {
       setError('Please upload a valid audio file');
       setFile(null);
     }
-    
+
     // Reset file input
-    if (event.target) {
-      event.target.value = '';
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -208,57 +209,50 @@ const TranscriptionApp: React.FC = () => {
     return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
   };
 
+  const stopCurrentPlayback = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      if (activeTimeUpdateHandler.current) {
+        audioRef.current.removeEventListener('timeupdate', activeTimeUpdateHandler.current);
+        activeTimeUpdateHandler.current = null;
+      }
+      audioRef.current.src = '';
+    }
+    setIsPlaying(false);
+    setCurrentAudio(null);
+  };
+
   const playAudioExcerpt = async (start: number, end: number) => {
     if (!file || !audioRef.current) return;
 
     try {
-      // Always stop current playback first
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        setIsPlaying(false);
-      }
+      // Stop any current playback
+      stopCurrentPlayback();
 
-      // If clicking the same excerpt that's playing, just stop
+      // If clicking the same excerpt that was playing, just stop
       if (currentAudio === `${start}-${end}`) {
-        setCurrentAudio(null);
         return;
       }
 
       // Create new audio source
       const blob = new Blob([file], { type: file.type });
       const url = URL.createObjectURL(blob);
-      
+
       // Set up new audio
       audioRef.current.src = url;
       audioRef.current.currentTime = start / 1000;
 
-      const cleanup = () => {
-        if (audioRef.current) {
-          audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-          audioRef.current.removeEventListener('ended', handleEnded);
-        }
-        URL.revokeObjectURL(url);
-      };
-
+      // Create new timeupdate handler
       const handleTimeUpdate = () => {
         if (audioRef.current && audioRef.current.currentTime >= end / 1000) {
-          audioRef.current.pause();
-          setIsPlaying(false);
-          setCurrentAudio(null);
-          cleanup();
+          stopCurrentPlayback();
+          URL.revokeObjectURL(url);
         }
       };
 
-      const handleEnded = () => {
-        setIsPlaying(false);
-        setCurrentAudio(null);
-        cleanup();
-      };
-
-      // Add event listeners
+      // Store the handler reference for cleanup
+      activeTimeUpdateHandler.current = handleTimeUpdate;
       audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
-      audioRef.current.addEventListener('ended', handleEnded);
 
       // Play the audio
       await audioRef.current.play();
@@ -267,11 +261,7 @@ const TranscriptionApp: React.FC = () => {
 
     } catch (err) {
       console.error('Audio playback error:', err);
-      setIsPlaying(false);
-      setCurrentAudio(null);
-      if (audioRef.current) {
-        audioRef.current.src = '';
-      }
+      stopCurrentPlayback();
     }
   };
 
