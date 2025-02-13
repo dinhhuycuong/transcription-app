@@ -142,8 +142,8 @@ const TranscriptionApp: React.FC = () => {
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const uploadedFile = event.target.files?.[0];
-    if (uploadedFile && uploadedFile.type.startsWith("audio/")) {
-      // Clear previous data when new file is uploaded
+    if (uploadedFile && uploadedFile.type.startsWith('audio/')) {
+      // Clear previous data
       setFile(uploadedFile);
       setError(null);
       setTranscription(null);
@@ -151,9 +151,20 @@ const TranscriptionApp: React.FC = () => {
       setSpeakerExcerpts({});
       setCurrentAudio(null);
       setIsPlaying(false);
+      
+      // Reset audio player
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
     } else {
-      setError("Please upload a valid audio file");
+      setError('Please upload a valid audio file');
       setFile(null);
+    }
+    
+    // Reset file input
+    if (event.target) {
+      event.target.value = '';
     }
   };
 
@@ -201,49 +212,77 @@ const TranscriptionApp: React.FC = () => {
     if (!file || !audioRef.current) return;
 
     try {
-      if (isPlaying) {
+      // Always stop current playback first
+      if (audioRef.current) {
         audioRef.current.pause();
+        audioRef.current.src = '';
         setIsPlaying(false);
-        if (currentAudio === `${start}-${end}`) {
-          setCurrentAudio(null);
-          return;
-        }
       }
 
+      // If clicking the same excerpt that's playing, just stop
+      if (currentAudio === `${start}-${end}`) {
+        setCurrentAudio(null);
+        return;
+      }
+
+      // Create new audio source
       const blob = new Blob([file], { type: file.type });
       const url = URL.createObjectURL(blob);
-
+      
+      // Set up new audio
       audioRef.current.src = url;
       audioRef.current.currentTime = start / 1000;
 
       const cleanup = () => {
         if (audioRef.current) {
-          const handleTimeUpdate = createHandleTimeUpdate(
-            end,
-            audioRef.current,
-            () => {}
-          );
-          audioRef.current.removeEventListener("timeupdate", handleTimeUpdate);
+          audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+          audioRef.current.removeEventListener('ended', handleEnded);
         }
         URL.revokeObjectURL(url);
       };
 
-      const handleTimeUpdate = createHandleTimeUpdate(
-        end,
-        audioRef.current,
-        cleanup
-      );
-      audioRef.current.addEventListener("timeupdate", handleTimeUpdate);
+      const handleTimeUpdate = () => {
+        if (audioRef.current && audioRef.current.currentTime >= end / 1000) {
+          audioRef.current.pause();
+          setIsPlaying(false);
+          setCurrentAudio(null);
+          cleanup();
+        }
+      };
 
+      const handleEnded = () => {
+        setIsPlaying(false);
+        setCurrentAudio(null);
+        cleanup();
+      };
+
+      // Add event listeners
+      audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
+      audioRef.current.addEventListener('ended', handleEnded);
+
+      // Play the audio
       await audioRef.current.play();
       setIsPlaying(true);
       setCurrentAudio(`${start}-${end}`);
+
     } catch (err) {
-      console.error("Audio playback error:", err);
+      console.error('Audio playback error:', err);
       setIsPlaying(false);
       setCurrentAudio(null);
+      if (audioRef.current) {
+        audioRef.current.src = '';
+      }
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+      }
+    };
+  }, []);
 
   const copyToClipboard = () => {
     if (!transcription) return;
@@ -472,44 +511,54 @@ const TranscriptionApp: React.FC = () => {
 
       {/* Transcription Display */}
       {transcription && (
-        <div className="space-y-6"> {/* Increased spacing */}
-        {transcription && (
-          <div className="space-y-6"> {/* Increased spacing */}
-            <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Transcription</h2>
-              <div className="space-x-3"> {/* Increased spacing */}
-                <button
-                  onClick={copyToClipboard}
-                  className="p-2 hover:bg-gray-100 rounded"
-                  title="Copy to clipboard"
-                >
-                  <Copy className="h-5 w-5" />
-                </button>
-                <button
-                  onClick={downloadTranscription}
-                  className="p-2 hover:bg-gray-100 rounded"
-                  title="Download as text file"
-                >
-                  <Download className="h-5 w-5" />
-                </button>
+        <div className="space-y-6">
+          {" "}
+          {/* Increased spacing */}
+          {transcription && (
+            <div className="space-y-6">
+              {" "}
+              {/* Increased spacing */}
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-semibold">Transcription</h2>
+                <div className="space-x-3">
+                  {" "}
+                  {/* Increased spacing */}
+                  <button
+                    onClick={copyToClipboard}
+                    className="p-2 hover:bg-gray-100 rounded"
+                    title="Copy to clipboard"
+                  >
+                    <Copy className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={downloadTranscription}
+                    className="p-2 hover:bg-gray-100 rounded"
+                    title="Download as text file"
+                  >
+                    <Download className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-5 p-6 bg-gray-50 rounded-lg">
+                {" "}
+                {/* Increased padding and spacing */}
+                {transcription.utterances.map((utterance, index) => (
+                  <div key={index} className="space-y-2">
+                    <div className="text-sm text-gray-600">
+                      {speakers[utterance.speaker] ||
+                        `Speaker ${utterance.speaker}`}{" "}
+                      {formatTimestamp(utterance.start)}
+                    </div>
+                    <p className="pl-4 text-gray-800">{utterance.text}</p>
+                  </div>
+                ))}
               </div>
             </div>
-            <div className="space-y-5 p-6 bg-gray-50 rounded-lg"> {/* Increased padding and spacing */}
-              {transcription.utterances.map((utterance, index) => (
-                <div key={index} className="space-y-2">
-                  <div className="text-sm text-gray-600">
-                    {speakers[utterance.speaker] || `Speaker ${utterance.speaker}`} {formatTimestamp(utterance.start)}
-                  </div>
-                  <p className="pl-4 text-gray-800">{utterance.text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
       )}
     </div>
   );
 };
 
-export { TranscriptionApp as default };
+export default TranscriptionApp;
