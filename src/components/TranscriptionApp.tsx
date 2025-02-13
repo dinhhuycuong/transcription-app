@@ -142,17 +142,20 @@ const TranscriptionApp: React.FC = () => {
   };
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const uploadedFile = event.target.files?.[0];
+    if (!event.target.files || event.target.files.length === 0) {
+      return;
+    }
+  
+    const uploadedFile = event.target.files[0];
+    
+    // Clear the input value immediately
+    event.target.value = '';
+    
     if (uploadedFile && uploadedFile.type.startsWith('audio/')) {
-      // Reset audio state
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-      }
-      setIsPlaying(false);
-      setCurrentAudio(null);
-
-      // Clear previous states
+      // Stop any current audio playback
+      stopCurrentPlayback();
+      
+      // Clear all previous states
       setFile(uploadedFile);
       setError(null);
       setTranscription(null);
@@ -161,11 +164,6 @@ const TranscriptionApp: React.FC = () => {
     } else {
       setError('Please upload a valid audio file');
       setFile(null);
-    }
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
     }
   };
 
@@ -379,40 +377,20 @@ const TranscriptionApp: React.FC = () => {
 
       {/* File Upload Section */}
       <div className="space-y-6">
-        {" "}
-        {/* Increased spacing */}
-        {!file ? (
-          <div
-            className="border-2 border-dashed rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Upload className="mx-auto h-12 w-12 text-gray-400" />
-            <p className="mt-4">
-              Click to upload or drag and drop audio file
-            </p>{" "}
-            {/* Increased margin */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept="audio/*"
-              className="hidden"
-            />
-          </div>
-        ) : (
-          <div className="p-6 bg-gray-50 rounded-lg shadow-sm">
-            {" "}
-            {/* Increased padding */}
-            <div className="flex justify-between items-center">
-              <div className="flex items-center space-x-4">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="p-2 hover:bg-gray-100 rounded"
-                >
-                  <Upload className="h-5 w-5 text-gray-500" />
-                </button>
-                <span className="truncate max-w-md">{file.name}</span>
-              </div>
+        <div className="p-6 bg-gray-50 rounded-lg shadow-sm">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-4">
+              <label 
+                htmlFor="file-upload" 
+                className="p-2 hover:bg-gray-100 rounded cursor-pointer"
+              >
+                <Upload className="h-5 w-5 text-gray-500" />
+              </label>
+              <span className="truncate max-w-md">
+                {file ? file.name : 'No file selected'}
+              </span>
+            </div>
+            {file && (
               <button
                 onClick={handleSubmit}
                 disabled={loading}
@@ -427,9 +405,17 @@ const TranscriptionApp: React.FC = () => {
                   "Transcribe"
                 )}
               </button>
-            </div>
+            )}
           </div>
-        )}
+        </div>
+        <input
+          id="file-upload"
+          type="file"
+          onChange={handleFileUpload}
+          accept="audio/*"
+          className="hidden"
+          ref={fileInputRef}
+        />
       </div>
 
       {/* Error Display */}
